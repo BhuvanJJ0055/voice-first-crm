@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client"
+  output   = "./client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  name         String
+  password     String
+  role         Role          @default(EMPLOYEE)
+  leaveBalance Int           @default(20)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  leaves       Leave[]       @relation("UserLeaves")
+  activityLogs ActivityLog[]
+
+  @@index([email])
+}
+
+enum Role {
+  EMPLOYEE
+  ADMIN
+}
+
+model Leave {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation("UserLeaves", fields: [userId], references: [id])
+  date      DateTime
+  type      LeaveType
+  status    LeaveStatus @default(PENDING)
+  reason    String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([userId, status])
+  @@index([date])
+}
+
+enum LeaveType {
+  FULL_DAY
+  HALF_DAY
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ActivityLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
+  voiceInput String?
+  intentJson Json
+  status     String
+  timestamp  DateTime @default(now())
+
+  @@index([userId, timestamp])
+  @@index([action])
+}
