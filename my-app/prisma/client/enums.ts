@@ -32,3 +32,11 @@ export const LeaveStatus = {
 } as const
 
 export type LeaveStatus = (typeof LeaveStatus)[keyof typeof LeaveStatus]
+
+
+export const TaskStatus = {
+  OPEN: 'OPEN',
+  COMPLETED: 'COMPLETED'
+} as const
+
+export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus]

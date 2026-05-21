@@ -11,4 +11,5 @@
 export type * from './models/User'
 export type * from './models/Leave'
 export type * from './models/ActivityLog'
+export type * from './models/Task'
 export type * from './commonInputTypes'

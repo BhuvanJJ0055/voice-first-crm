@@ -18,6 +18,7 @@ model User {
   updatedAt    DateTime      @updatedAt
   leaves       Leave[]       @relation("UserLeaves")
   activityLogs ActivityLog[]
+  tasks        Task[]        @relation("UserTasks")
 
   @@index([email])
 }
@@ -65,4 +66,23 @@ model ActivityLog {
 
   @@index([userId, timestamp])
   @@index([action])
+}
+
+model Task {
+  id           String     @id @default(uuid())
+  title        String
+  description  String?
+  status       TaskStatus @default(OPEN)
+  assignedToId String?
+  assignedTo   User?      @relation("UserTasks", fields: [assignedToId], references: [id])
+  createdById  String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([assignedToId, status])
+}
+
+enum TaskStatus {
+  OPEN
+  COMPLETED
 }

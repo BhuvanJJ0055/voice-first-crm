@@ -1,13 +1,24 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+
+interface StatusMessage {
+  type: 'success' | 'error' | 'info';
+  title: string;
+  description?: string;
+  transcription?: string;
+  actions?: Array<{ intent: string; createdEntityId?: string }>;
+}
 
 export default function MicRecorder() {
+  const router = useRouter()
   const [isRecording, setIsRecording] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [uploadedKey, setUploadedKey] = useState<string | null>(null)
   const [volume, setVolume] = useState<number>(0)
+  const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
@@ -110,7 +121,11 @@ export default function MicRecorder() {
       setIsRecording(true)
     } catch (err) {
       console.error('Failed to start recording:', err)
-      alert('Microphone access failed.')
+      setStatusMessage({
+        type: 'error',
+        title: 'Microphone Error',
+        description: 'Microphone access failed. Please ensure microphone permissions are granted.'
+      })
     }
   }
 
@@ -124,14 +139,43 @@ export default function MicRecorder() {
   const uploadAudioPayload = async (blob: Blob) => {
     setIsUploading(true)
     try {
-      const ext = blob.type.includes('ogg') ? 'ogg' : 'webm'
       const form = new FormData()
-      form.append('file', blob, `audio_command.${ext}`)
-      const resp = await fetch('/api/upload', { method: 'POST', body: form })
-      const data = await resp.json()
-      if (data.success || resp.ok) setUploadedKey(data.fileKey || 'Upload Success')
+      // Explicitly send as audio_command.webm matching backend boundaries
+      form.append('file', blob, 'audio_command.webm')
+      
+      const response = await fetch('/api/voice-command', {
+        method: 'POST',
+        body: form
+      })
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        console.log("[SYSTEM] Voice orchestration complete:", data.meta)
+        
+        setStatusMessage({
+          type: 'success',
+          title: 'Voice Command Executed',
+          transcription: data.meta.transcription,
+          actions: data.meta.results
+        })
+        
+        // TRICK TO TRIGGER AUTOMATIC REAL-TIME REFRESH OF PRISMA COUNTERS WITHOUT FULL PAGE RELOAD
+        router.refresh()
+      } else {
+        setStatusMessage({
+          type: 'error',
+          title: 'AI Processing Error',
+          description: data.error
+        })
+      }
     } catch (e) {
-      console.error('Upload error:', e)
+      console.error('[CORE] Global upload failure:', e)
+      setStatusMessage({
+        type: 'error',
+        title: 'Network Error',
+        description: 'Network layer connection drop.'
+      })
     } finally {
       setIsUploading(false)
     }
@@ -193,6 +237,70 @@ export default function MicRecorder() {
         <div className="w-full flex flex-col gap-1">
           <p className="text-xs text-zinc-400 text-center">Local playback (before upload)</p>
           <audio controls src={audioUrl} className="w-full h-10" />
+        </div>
+      )}
+
+      {statusMessage && (
+        <div className={`w-full p-4 rounded-xl border relative text-sm transition-all duration-300 ${
+          statusMessage.type === 'success'
+            ? 'bg-green-50/70 border-green-200 text-green-950 dark:bg-green-950/20 dark:border-green-800/40 dark:text-green-100'
+            : 'bg-red-50/70 border-red-200 text-red-950 dark:bg-red-950/20 dark:border-red-800/40 dark:text-red-100'
+        }`}>
+          <button
+            onClick={() => setStatusMessage(null)}
+            className="absolute top-2.5 right-2.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors p-1"
+            title="Dismiss"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          
+          <div className="flex items-start gap-2.5">
+            {statusMessage.type === 'success' ? (
+              <svg className="w-5 h-5 text-green-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            )}
+            
+            <div className="flex-1 min-w-0">
+              <h4 className="font-bold text-sm tracking-tight">{statusMessage.title}</h4>
+              
+              {statusMessage.description && (
+                <p className="mt-1 text-xs opacity-90 leading-relaxed">{statusMessage.description}</p>
+              )}
+              
+              {statusMessage.transcription && (
+                <div className="mt-2.5 bg-white/50 dark:bg-zinc-950/30 p-2.5 rounded-lg border border-zinc-200/50 dark:border-zinc-800/30">
+                  <span className="text-[9px] uppercase tracking-wider font-semibold text-zinc-400 dark:text-zinc-500 block mb-0.5">Transcribed Input</span>
+                  <p className="italic text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    "{statusMessage.transcription}"
+                  </p>
+                </div>
+              )}
+              
+              {statusMessage.actions && statusMessage.actions.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                  <span className="text-[9px] uppercase tracking-wider font-semibold text-zinc-400 dark:text-zinc-500 block mb-1">Actions Executed</span>
+                  {statusMessage.actions.map((act, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5 text-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 text-green-500"></span>
+                      <span className="font-mono bg-green-100/50 dark:bg-green-900/20 px-1.5 py-0.5 rounded text-[10px] font-bold text-green-700 dark:text-green-400">
+                        {act.intent}
+                      </span>
+                      <span className="text-[10px] opacity-75 truncate">
+                        {act.createdEntityId ? `(ID: ${act.createdEntityId.substring(0, 8)}...)` : '(Logged)'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

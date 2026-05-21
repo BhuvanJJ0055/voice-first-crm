@@ -32,3 +32,8 @@ export type Leave = Prisma.LeaveModel
  * 
  */
 export type ActivityLog = Prisma.ActivityLogModel
+/**
+ * Model Task
+ * 
+ */
+export type Task = Prisma.TaskModel
