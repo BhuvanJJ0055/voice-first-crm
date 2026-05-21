@@ -19,6 +19,7 @@ export default function MicRecorder() {
   const [uploadedKey, setUploadedKey] = useState<string | null>(null)
   const [volume, setVolume] = useState<number>(0)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
+  const [textCommand, setTextCommand] = useState('')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
@@ -138,6 +139,8 @@ export default function MicRecorder() {
 
   const uploadAudioPayload = async (blob: Blob) => {
     setIsUploading(true)
+    setStatusMessage(null)
+    const startTime = Date.now()
     try {
       const form = new FormData()
       // Explicitly send as audio_command.webm matching backend boundaries
@@ -149,6 +152,9 @@ export default function MicRecorder() {
       })
       
       const data = await response.json()
+      const latency = Date.now() - startTime
+      localStorage.setItem('voxcrm_last_latency', String(latency))
+      window.dispatchEvent(new Event('storage'))
       
       if (data.success) {
         console.log("[SYSTEM] Voice orchestration complete:", data.meta)
@@ -171,6 +177,56 @@ export default function MicRecorder() {
       }
     } catch (e) {
       console.error('[CORE] Global upload failure:', e)
+      setStatusMessage({
+        type: 'error',
+        title: 'Network Error',
+        description: 'Network layer connection drop.'
+      })
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  const handleSubmitText = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!textCommand.trim() || isUploading || isRecording) return
+
+    setIsUploading(true)
+    setStatusMessage(null)
+    const startTime = Date.now()
+    try {
+      const form = new FormData()
+      form.append('text', textCommand.trim())
+
+      const response = await fetch('/api/voice-command', {
+        method: 'POST',
+        body: form
+      })
+
+      const data = await response.json()
+      const latency = Date.now() - startTime
+      localStorage.setItem('voxcrm_last_latency', String(latency))
+      window.dispatchEvent(new Event('storage'))
+
+      if (data.success) {
+        console.log("[SYSTEM] Text command execution complete:", data.meta)
+        setStatusMessage({
+          type: 'success',
+          title: 'Text Command Executed',
+          transcription: data.meta.transcription,
+          actions: data.meta.results
+        })
+        setTextCommand('')
+        router.refresh()
+      } else {
+        setStatusMessage({
+          type: 'error',
+          title: 'AI Processing Error',
+          description: data.error
+        })
+      }
+    } catch (e) {
+      console.error('[CORE] Text command execution failure:', e)
       setStatusMessage({
         type: 'error',
         title: 'Network Error',
@@ -226,6 +282,36 @@ export default function MicRecorder() {
       >
         {isRecording ? 'Stop' : isUploading ? '...' : 'Record'}
       </button>
+
+      <div className="w-full flex items-center justify-between my-2 text-zinc-400 dark:text-zinc-650">
+        <hr className="w-full border-zinc-200 dark:border-zinc-800" />
+        <span className="px-3 text-[10px] font-bold uppercase tracking-widest whitespace-nowrap">OR</span>
+        <hr className="w-full border-zinc-200 dark:border-zinc-800" />
+      </div>
+
+      <form onSubmit={handleSubmitText} className="w-full flex flex-col gap-2">
+        <label htmlFor="text-command" className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+          Type text command manually:
+        </label>
+        <div className="flex gap-2 w-full">
+          <input
+            id="text-command"
+            type="text"
+            placeholder="e.g., request sick leave..."
+            value={textCommand}
+            onChange={(e) => setTextCommand(e.target.value)}
+            disabled={isUploading || isRecording}
+            className="flex-1 text-xs p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <button
+            type="submit"
+            disabled={isUploading || isRecording || !textCommand.trim()}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+          >
+            Send
+          </button>
+        </div>
+      </form>
 
       {uploadedKey && (
         <div className="w-full text-center bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-900/50 p-2 rounded-lg text-xs font-semibold text-green-600">

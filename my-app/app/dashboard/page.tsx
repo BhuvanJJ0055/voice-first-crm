@@ -2,6 +2,7 @@ import { auth } from "@/auth"
 import { redirect } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import MicRecorder from "@/components/voice/MicRecorder"
+import PerformanceMetrics from "@/components/dashboard/PerformanceMetrics"
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,8 @@ export default async function DashboardPage() {
     recentLogs,
     openTasks,
     pendingLeaves,
+    totalLogsCount,
+    successLogsCount,
   ] = await Promise.all([
     prisma.task.count({
       where: {
@@ -58,6 +61,12 @@ export default async function DashboardPage() {
       orderBy: { createdAt: "desc" },
       take: 5,
     }),
+    prisma.activityLog.count({
+      where: { userId: userId },
+    }),
+    prisma.activityLog.count({
+      where: { userId: userId, status: "SUCCESS" },
+    }),
   ])
 
   return (
@@ -80,87 +89,16 @@ export default async function DashboardPage() {
         {/* Main Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
-          {/* Left Panel */}
+          {/* Left Panel: Inputs & Interactive Feeds */}
           <div className="col-span-1 lg:col-span-2 space-y-8">
             {/* Audio Recorder Card */}
             <div className="bg-white dark:bg-zinc-900 p-6 rounded-2xl shadow-sm border border-zinc-200 dark:border-zinc-800">
-              <h2 className="text-xl font-bold mb-4 text-zinc-900 dark:text-white">AI Voice Assistant</h2>
-              <p className="text-zinc-500 mb-6 text-sm"> Speak orders clearly to manage records dynamically.</p>
+              <h2 className="text-xl font-bold mb-4 text-zinc-900 dark:text-white flex items-center gap-2">
+                <span>🎤</span> AI Multi-Input Workspace
+              </h2>
+              <p className="text-zinc-500 dark:text-zinc-400 mb-6 text-sm">Speak commands or input manual text instructions to manage system nodes.</p>
               <div className="bg-zinc-50 dark:bg-zinc-950 p-6 rounded-xl border border-zinc-200 dark:border-zinc-800">
                 <MicRecorder />
-              </div>
-            </div>
-
-            {/* Professional Real-Time Audit Feed */}
-            <div className="bg-white dark:bg-zinc-900 p-6 rounded-2xl shadow-sm border border-zinc-200 dark:border-zinc-800">
-              <h2 className="text-xl font-bold mb-4 text-zinc-900 dark:text-white">Recent Voice Operations</h2>
-              <div className="flow-root">
-                <ul className="-my-5 divide-y divide-zinc-200 dark:divide-zinc-800">
-                  {recentLogs.length === 0 ? (
-                    <p className="text-sm text-zinc-400 py-4 text-center">No voice operations logged yet.</p>
-                  ) : (
-                    recentLogs.map((log) => (
-                      <li key={log.id} className="py-4">
-                        <div className="flex items-center space-x-4">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-zinc-900 dark:text-white truncate">
-                              {log.voiceInput ? `"${log.voiceInput}"` : "[Scheduled Background Operation]"}
-                            </p>
-                            <p className="text-xs text-zinc-400 mt-0.5">
-                              Intent Target: <span className="font-mono bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-600 dark:text-zinc-300">{log.action}</span>
-                            </p>
-                          </div>
-                          <div>
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                              log.status === "SUCCESS" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
-                            }`}>
-                              {log.status}
-                            </span>
-                          </div>
-                        </div>
-                      </li>
-                    ))
-                  )}
-                </ul>
-              </div>
-            </div>
-
-          </div>
-
-          {/* Right Panel: Quick Stats & Live Feeds */}
-          <div className="col-span-1 space-y-8">
-            {/* Quick Stats Grid */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl shadow-sm border border-zinc-200/80 dark:border-zinc-800 flex justify-between items-start hover:shadow-md transition-all">
-                <div>
-                  <p className="text-xs text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider">
-                    {userRole === "ADMIN" ? "Open Tasks" : "My Tasks"}
-                  </p>
-                  <p className="text-3xl font-black text-zinc-900 dark:text-white mt-2 font-sans tracking-tight">
-                    {openTasksCount}
-                  </p>
-                </div>
-                <div className="p-2.5 bg-blue-50 dark:bg-blue-950/40 rounded-xl text-blue-600 dark:text-blue-400">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                  </svg>
-                </div>
-              </div>
-              
-              <div className="bg-white dark:bg-zinc-900 p-5 rounded-2xl shadow-sm border border-zinc-200/80 dark:border-zinc-800 flex justify-between items-start hover:shadow-md transition-all">
-                <div>
-                  <p className="text-xs text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider">
-                    {userRole === "ADMIN" ? "Pending Leaves" : "My Leaves"}
-                  </p>
-                  <p className="text-3xl font-black text-zinc-900 dark:text-white mt-2 font-sans tracking-tight">
-                    {pendingLeavesCount}
-                  </p>
-                </div>
-                <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 rounded-xl text-amber-600 dark:text-amber-400">
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                </div>
               </div>
             </div>
 
@@ -177,9 +115,9 @@ export default async function DashboardPage() {
                   {openTasks.length}
                 </span>
               </div>
-              <div className="space-y-3.5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {openTasks.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-center text-zinc-400 dark:text-zinc-650">
+                  <div className="col-span-2 flex flex-col items-center justify-center py-6 text-center text-zinc-400 dark:text-zinc-650 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-xl">
                     <svg className="w-8 h-8 opacity-40 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" />
                     </svg>
@@ -189,7 +127,7 @@ export default async function DashboardPage() {
                   openTasks.map((task) => (
                     <div key={task.id} className="group p-4 bg-zinc-50 dark:bg-zinc-950 rounded-xl border border-zinc-200/60 dark:border-zinc-800/80 border-l-4 border-l-blue-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
                       <div className="flex justify-between items-start gap-2">
-                        <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200 leading-snug group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                        <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200 leading-snug group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-1">
                           {task.title}
                         </h3>
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200/50 dark:border-blue-900/40">
@@ -228,9 +166,9 @@ export default async function DashboardPage() {
                   {pendingLeaves.length}
                 </span>
               </div>
-              <div className="space-y-3.5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {pendingLeaves.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-center text-zinc-400 dark:text-zinc-650">
+                  <div className="col-span-2 flex flex-col items-center justify-center py-6 text-center text-zinc-400 dark:text-zinc-650 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-xl">
                     <svg className="w-8 h-8 opacity-40 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
@@ -265,6 +203,71 @@ export default async function DashboardPage() {
                 )}
               </div>
             </div>
+
+            {/* Historical Logs */}
+            <div className="bg-white dark:bg-zinc-900 p-6 rounded-2xl shadow-sm border border-zinc-200 dark:border-zinc-800">
+              <h2 className="text-xl font-bold mb-4 text-zinc-900 dark:text-white">📜 Operational AI History Logs</h2>
+              <div className="flow-root">
+                <ul className="-my-5 divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {recentLogs.length === 0 ? (
+                    <p className="text-sm text-zinc-400 py-4 text-center">No transactions logged yet.</p>
+                  ) : (
+                    recentLogs.map((log) => (
+                      <li key={log.id} className="py-4">
+                        <div className="flex items-center space-x-4">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-zinc-900 dark:text-white truncate">
+                              {log.voiceInput ? `"${log.voiceInput}"` : "[Manual Input Trace]"}
+                            </p>
+                            <p className="text-xs text-zinc-400 mt-0.5">
+                              Intent Target: <span className="font-mono bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-600 dark:text-zinc-300">{log.action}</span>
+                            </p>
+                          </div>
+                          <div>
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                              log.status === "SUCCESS" ? "bg-green-55 text-green-800 dark:bg-green-950/40 dark:text-green-400" : "bg-red-55 text-red-800 dark:bg-red-950/40 dark:text-red-400"
+                            }`}>
+                              {log.status}
+                            </span>
+                          </div>
+                        </div>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Right Panel: Telemetry & Quick Counters */}
+          <div className="col-span-1 space-y-6">
+            
+            {/* Quick Stats Counters */}
+            <div className="bg-white dark:bg-zinc-900 p-6 rounded-2xl shadow-sm border border-zinc-200 dark:border-zinc-800">
+              <h2 className="text-lg font-bold text-zinc-900 dark:text-white mb-4">Data Metrics</h2>
+              <div className="space-y-4">
+                <div className="p-4 bg-zinc-50 dark:bg-zinc-950 rounded-xl border border-zinc-200 dark:border-zinc-800">
+                  <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">
+                    {userRole === "ADMIN" ? "Total System Tasks" : "Personal Tasks"}
+                  </p>
+                  <p className="text-4xl font-black text-zinc-900 dark:text-white mt-1 tracking-tight">{openTasksCount}</p>
+                </div>
+                <div className="p-4 bg-zinc-50 dark:bg-zinc-950 rounded-xl border border-zinc-200 dark:border-zinc-800">
+                  <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">
+                    {userRole === "ADMIN" ? "Total Pending Leaves" : "Personal Leaves"}
+                  </p>
+                  <p className="text-4xl font-black text-zinc-900 dark:text-white mt-1 tracking-tight">{pendingLeavesCount}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Performance Telemetry Panel (Layer Bottom Core Component) */}
+            <PerformanceMetrics
+              totalLogsCount={totalLogsCount}
+              successLogsCount={successLogsCount}
+            />
+
           </div>
 
         </div>

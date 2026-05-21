@@ -1,0 +1,51 @@
+{
+  "name": "VoxCRM Leave Notification Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voxcrm-leave",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "webhook-node",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "title": "=New Leave Request Notification",
+        "text": "=Employee (ID: {{ $json.body.userId }}) has requested a leave.\n*Reason:* {{ $json.body.reason || 'No reason specified' }}\n*Type:* {{ $json.body.type }}\n*Leave ID:* {{ $json.body.leaveId }}\n*Timestamp:* {{ $json.body.timestamp }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        250,
+        0
+      ],
+      "id": "slack-node",
+      "name": "Slack Notification (Simulated)"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Slack Notification (Simulated)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

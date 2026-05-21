@@ -31,18 +31,46 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // 2. Extract FormData & Payload
+    // 2. Determine Payload Type (Voice Input vs Text Input)
     const formData = await req.formData()
     const file = formData.get("file") as Blob | null
+    const textInput = formData.get("text") as string | null
 
-    if (!file) {
-      return NextResponse.json({ success: false, error: "Missing audio boundary payload." }, { status: 400 })
+    if (!file && !textInput) {
+      return NextResponse.json({ success: false, error: "Missing both voice boundary or text input payloads." }, { status: 400 })
     }
 
-    // Convert WebM Blob to Node.js Buffer and Base64 for transit
-    const arrayBuffer = await file.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
-    const base64Audio = buffer.toString("base64")
+    let isVoice = true
+    let textCommand = ""
+    let fileType = "audio/webm"
+    let base64Audio = ""
+
+    if (textInput) {
+      isVoice = false
+      textCommand = textInput
+    } else if (file) {
+      isVoice = true
+      fileType = file.type || "audio/webm"
+      const arrayBuffer = await file.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+      base64Audio = buffer.toString("base64")
+    }
+
+    // Layer 2: Context Manager — Retrieve user's recent successful activity logs to resolve multi-turn context references (conversational memory)
+    const shortTermMemory = await prisma.activityLog.findMany({
+      where: { userId, status: "SUCCESS" },
+      orderBy: { timestamp: "desc" },
+      take: 3,
+      select: { voiceInput: true, action: true, intentJson: true }
+    })
+
+    const conversationContext = shortTermMemory.slice().reverse().map((log, i) => {
+      return `Command ${i+1}: User said: "${log.voiceInput}". System mapped to action: [${log.action}].`
+    }).join("\n")
+
+    const contextPrompt = conversationContext
+      ? `CONVERSATIONAL MEMORY MANAGER CONTEXT:\n${conversationContext}\nUse this context history to resolve pronouns like 'it', 'them', 'that', or 'this task' if present in the new command.`
+      : "No prior command history in this session."
 
     // 3. AI Orchestration Engine: Call Gemini with Strict Structured JSON output and automatic retry/backoff
     let aiResponse = null
@@ -57,17 +85,22 @@ export async function POST(req: NextRequest) {
       while (attempt < maxRetries) {
         attempt++
         try {
-          console.log(`[SYSTEM] Attempting content generation with model: ${model} (attempt ${attempt}/${maxRetries})`)
+          console.log(`[SYSTEM] Attempting content generation with model: ${model} (attempt ${attempt}/${maxRetries}, isVoice: ${isVoice})`)
+          
           const response = await ai.models.generateContent({
             model: model,
-            contents: [
-              {
-                inlineData: {
-                  mimeType: file.type || "audio/webm",
-                  data: base64Audio,
-                },
-              },
-              `You are the core processing engine for VoxCRM. Your job is to analyze the user's recorded speech and map it to one or more structured operational objects representing their intents.
+            contents: isVoice
+              ? [
+                  {
+                    inlineData: {
+                      mimeType: fileType,
+                      data: base64Audio,
+                    },
+                  },
+                  `You are the core processing engine for VoxCRM. Your job is to analyze the user's recorded speech and map it to one or more structured operational objects representing their intents.
+
+   Context:
+   ${contextPrompt}
 
    Strict Instructions:
    1. If the user mentions "task", "create task", "add task", or asks to do an action, add an action object with intent set to "CREATE_TASK". Extract a concise summary for 'title' (max 5 words) and put the full context in 'description'.
@@ -76,9 +109,26 @@ export async function POST(req: NextRequest) {
    4. A single audio clip can contain multiple instructions (e.g. creating a task and requesting leave at the same time). Make sure to parse each instruction into a separate action object in the 'actions' array.
 
    CRITICAL: Ensure the 'title' field is never empty if an action's intent is "CREATE_TASK".`
-            ],
+                ]
+              : [
+                  `You are the core processing engine for VoxCRM. Your job is to analyze the user's text command and map it to one or more structured operational objects representing their intents.
+
+   Context:
+   ${contextPrompt}
+
+   Input Command to Parse:
+   "${textCommand}"
+
+   Strict Instructions:
+   1. If the user mentions "task", "create task", "add task", or asks to do an action, add an action object with intent set to "CREATE_TASK". Extract a concise summary for 'title' (max 5 words) and put the full context in 'description'.
+   2. If the user mentions "leave", "sick leave", "vacation", or "time off", add an action object with intent set to "REQUEST_LEAVE". Set 'leaveType' to either "FULL_DAY" or "HALF_DAY" based on context, and extract the reason into 'reason'.
+   3. If the input contains generic greetings, testing phrases (like "hello hello"), or ambiguous speech, add an action object with intent set to "UNKNOWN".
+   4. A single command can contain multiple instructions (e.g. creating a task and requesting leave at the same time). Make sure to parse each instruction into a separate action object in the 'actions' array.
+
+   CRITICAL: Ensure the 'title' field is never empty if an action's intent is "CREATE_TASK".
+   Provide the verbatim input text command in the 'transcription' field of the output JSON.`
+                ],
             config: {
-              // Enforces that the model MUST return JSON perfectly matching our structure
               responseMimeType: "application/json",
               responseSchema: {
                 type: Type.OBJECT,
@@ -135,7 +185,23 @@ export async function POST(req: NextRequest) {
             break
           }
 
-          const delay = baseDelayMs * Math.pow(2, attempt - 1)
+          let delay = baseDelayMs * Math.pow(2, attempt - 1)
+          // Attempt to extract Google API's specific retry delay (e.g. "retryDelay":"24s")
+          try {
+            const errStr = typeof err === "string" ? err : (JSON.stringify(err) || err.message || "")
+            const match = errStr.match(/"retryDelay"\s*:\s*"(\d+)s"/) || errStr.match(/retryDelay.*?(\d+)s/)
+            if (match && match[1]) {
+              const seconds = parseInt(match[1], 10)
+              if (!isNaN(seconds) && seconds > 0) {
+                // Wait the requested time + 1.5s buffer, capped at 30 seconds
+                delay = Math.min((seconds + 1.5) * 1000, 30000)
+                console.log(`[SYSTEM] Gemini API rate limit detected. Dynamic delay set to ${delay}ms (retryDelay: ${seconds}s)`)
+              }
+            }
+          } catch (e) {
+            // fallback to default delay
+          }
+
           console.log(`[SYSTEM] Waiting ${delay}ms before retrying model ${model}...`)
           await new Promise((resolve) => setTimeout(resolve, delay))
         }
@@ -286,8 +352,8 @@ export async function POST(req: NextRequest) {
     // 5. Post-transaction webhook events (fire-and-forget, non-blocking)
     // Fires after any REQUEST_LEAVE is committed to the DB so that n8n can
     // trigger downstream notifications (Slack, email, etc.).
-    // Silently skipped when N8N_WEBHOOK_URL is absent — never affects the response.
-    const webhookUrl = process.env.N8N_WEBHOOK_URL
+    // Silently skipped when webhooks are absent — never affects the response.
+    const webhookUrl = process.env.N8N_LEAVE_WEBHOOK || process.env.N8N_WEBHOOK_URL
     if (webhookUrl) {
       operationalResult.results.forEach((result: any, idx: number) => {
         if (result.intent === "REQUEST_LEAVE" && result.createdEntityId) {

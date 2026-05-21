@@ -38,6 +38,42 @@ async function executeWithRetry(
 }
 
 /**
+ * Validates that the constructed Workflow is a true Directed Acyclic Graph (DAG)
+ * Runs a Depth-First Search (DFS) Cycle Detection algorithm to prevent processing deadlocks.
+ */
+export function validateDag(nodes: DAGNode[]): boolean {
+  const visited = new Set<string>();
+  const recStack = new Set<string>();
+  const nodeMap = new Map<string, DAGNode>(nodes.map(n => [n.id, n]));
+
+  function hasCycle(nodeId: string): boolean {
+    if (recStack.has(nodeId)) return true; // Cycle discovered!
+    if (visited.has(nodeId)) return false;
+
+    visited.add(nodeId);
+    recStack.add(nodeId);
+
+    const node = nodeMap.get(nodeId);
+    if (node && node.dependencies) {
+      for (const depId of node.dependencies) {
+        if (hasCycle(depId)) return true;
+      }
+    }
+
+    recStack.delete(nodeId);
+    return false;
+  }
+
+  // Evaluate every entry node in the workflow graph
+  for (const node of nodes) {
+    if (hasCycle(node.id)) {
+      throw new Error(`CRITICAL COMPLIANCE FAILURE: Cyclic dependency loop caught at Node ID: [${node.id}]`);
+    }
+  }
+  return true; // Graph is completely clean and acyclic
+}
+
+/**
  * executeDag
  *
  * Processes a list of DAGNodes in topological waves.
@@ -50,6 +86,9 @@ async function executeWithRetry(
  * round-trips from 4 to 2 (wave 1: both DB writes; wave 2: both audit logs).
  */
 export async function executeDag(nodes: DAGNode[]): Promise<DAGResult> {
+  // Run the explicit Layer 3 Acyclic Check matching your methodology blueprint
+  validateDag(nodes);
+
   const completed = new Set<string>();
   const failed    = new Map<string, Error>();
   const results   = new Map<string, any>();
