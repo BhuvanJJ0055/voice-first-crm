@@ -1,4 +1,4 @@
-import { PrismaClient } from './client/client';
+import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import bcrypt from 'bcryptjs';
@@ -21,6 +21,8 @@ async function main() {
   // Purge any lingering data to reset states clean
   await prisma.task.deleteMany();
   await prisma.leave.deleteMany();
+  await prisma.activityLog.deleteMany();
+  await prisma.meeting.deleteMany();
   await prisma.user.deleteMany();
 
   // 1. Provisions our System Administrator

@@ -1,161 +1,96 @@
-// lib/utils/scheduler.ts
-// Daily digest generator + node-cron scheduler for VoxCRM.
-//
-// Responsibilities:
-//   1. Query Prisma for all OPEN tasks and PENDING leave requests.
-//   2. Use Gemini to write a professional HTML admin digest from that data.
-//   3. Persist the digest as an ActivityLog row (visible in the dashboard audit trail).
-//   4. Deliver via email (falls back to console.log if SMTP is not configured).
-//   5. Register a cron job that fires at 08:00 AM IST every day.
+import cron from 'node-cron'
+import OpenAI from 'openai'
+import { prisma } from '@/lib/prisma'
+import { sendEmail } from '@/lib/utils/mailer'
 
-import cron from "node-cron"
-import { GoogleGenAI } from "@google/genai"
-import { prisma } from "@/lib/prisma"
-import { sendEmail } from "@/lib/utils/mailer"
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-
-// Guard against double-registration (hot-reload in dev can call initScheduler twice)
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 let schedulerInitialized = false
 
-/**
- * generateDailySummary
- *
- * Fetches live data from Neon and asks Gemini to produce a concise HTML digest.
- * Returns the raw HTML string for email delivery and DB persistence.
- */
 export async function generateDailySummary(): Promise<string> {
-  const [openTasks, pendingLeaves] = await Promise.all([
+  // Fetch all data in parallel — same wave pattern as DAG
+  const [openTasks, pendingLeaves, todayMeetings] = await Promise.all([
     prisma.task.findMany({
-      where: { status: "OPEN" },
-      include: { assignedTo: { select: { name: true, email: true } } },
-      orderBy: { createdAt: "desc" },
+      where: { status: 'OPEN' },
+      include: { assignedTo: { select: { name: true } } },
     }),
     prisma.leave.findMany({
-      where: { status: "PENDING" },
-      include: { user: { select: { name: true, email: true } } },
-      orderBy: { createdAt: "desc" },
+      where: { status: 'PENDING' },
+      include: { user: { select: { name: true } } },
+    }),
+    prisma.meeting.findMany({
+      where: {
+        startTime: {
+          gte: new Date(new Date().setHours(0, 0, 0, 0)),
+          lte: new Date(new Date().setHours(23, 59, 59, 999)),
+        },
+      },
+      include: { participants: { select: { name: true } } },
     }),
   ])
 
-  const taskList =
-    openTasks.length > 0
-      ? openTasks
-          .map(
-            (t, i) =>
-              `${i + 1}. "${t.title}" — assigned to ${t.assignedTo?.name ?? "Unassigned"}`,
-          )
-          .join("\n")
-      : "No open tasks."
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{
+      role: 'user',
+      content: `You are Orion, VoxCRM daily briefing assistant.
+      Open tasks (${openTasks.length}):
+      ${openTasks.map(t => `- "${t.title}" → ${t.assignedTo?.name || 'Unassigned'}`).join('\n')}
 
-  const leaveList =
-    pendingLeaves.length > 0
-      ? pendingLeaves
-          .map(
-            (l, i) =>
-              `${i + 1}. ${l.user.name} (${l.user.email}) — ${l.type.replace("_", " ")}: "${l.reason ?? "No reason"}"`,
-          )
-          .join("\n")
-      : "No pending leave requests."
+      Pending leaves (${pendingLeaves.length}):
+      ${pendingLeaves.map(l => `- ${l.user.name}: ${l.type}`).join('\n')}
 
-  const prompt = `You are a CRM assistant generating an HTML admin digest email.
+      Today's meetings (${todayMeetings.length}):
+      ${todayMeetings.map(m => `- "${m.title}" at ${new Date(m.startTime).toLocaleTimeString('en-IN')}`).join('\n')}
 
-Data:
-Open Tasks (${openTasks.length}):
-${taskList}
-
-Pending Leave Requests (${pendingLeaves.length}):
-${leaveList}
-
-Write a concise, professional HTML email body (no <html> or <body> wrapper tags).
-Structure it with:
-- A one-line executive summary
-- An <ul> of critical open tasks
-- An <ul> of pending leave requests needing approval
-- A short closing recommendation
-Use inline styles for basic formatting. Keep it under 250 words.`
-
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: [prompt],
+      Write a concise professional HTML summary under 200 words. Inline CSS only, no html/body tags.`
+    }],
   })
 
-  return response.text ?? "<p>Summary generation failed — check Gemini API key.</p>"
+  return completion.choices[0].message.content || '<p>No summary generated.</p>'
 }
 
-/**
- * runDailySummary
- *
- * Orchestrates the full summary pipeline:
- *   generate → persist to DB audit log → send email
- * Safe to call from both the cron and the manual API endpoint.
- */
-export async function runDailySummary(): Promise<{
-  summary: string
-  emailSent: boolean
-}> {
-  console.log("[SCHEDULER] Starting daily summary pipeline...")
-
+export async function runDailySummary() {
   const summaryHtml = await generateDailySummary()
+  const admins = await prisma.user.findMany({ where: { role: 'ADMIN' } })
 
-  // Persist to DB so the digest appears in the dashboard audit trail
-  const adminUser = await prisma.user.findFirst({ where: { role: "ADMIN" } })
-  if (adminUser) {
+  if (admins.length > 0) {
     await prisma.activityLog.create({
       data: {
-        userId: adminUser.id,
-        action: "DAILY_SUMMARY",
-        voiceInput: "[Automated Daily Digest]",
-        intentJson: {
-          type: "scheduled_digest",
-          generatedAt: new Date().toISOString(),
-        },
-        status: "SUCCESS",
+        userId: admins[0].id,
+        action: 'DAILY_SUMMARY',
+        voiceInput: '[Scheduled Daily Digest]',
+        intentJson: { generatedAt: new Date().toISOString(), adminsNotified: admins.length },
+        status: 'SUCCESS',
       },
     })
+
+    await Promise.all(
+      admins.map((admin) =>
+        sendEmail(
+          admin.email,
+          `VoxCRM Daily Briefing — ${new Date().toDateString()}`,
+          summaryHtml
+        ).catch((err) => console.error(`[CRON] Failed to email admin ${admin.email}:`, err.message))
+      )
+    )
   }
 
-  // Deliver via email (or console.log if SMTP is absent)
-  const adminEmail = process.env.ADMIN_EMAIL ?? "admin@voxcrm.com"
-  const dateLabel = new Date().toLocaleDateString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  })
-
-  await sendEmail(adminEmail, `VoxCRM Daily Digest — ${dateLabel}`, summaryHtml)
-
-  console.log("[SCHEDULER] Daily summary pipeline complete.")
-  return { summary: summaryHtml, emailSent: !!process.env.SMTP_USER }
+  return { summary: summaryHtml, emailSent: !!process.env.RESEND_API_KEY }
 }
 
-/**
- * initScheduler
- *
- * Registers the 8:00 AM IST cron job. Called once from instrumentation.ts
- * on server boot. The schedulerInitialized guard prevents duplicate
- * registrations during Next.js hot-reload in development.
- */
-export function initScheduler(): void {
+// Automatic scheduler — 8 AM IST every day
+export function initScheduler() {
   if (schedulerInitialized) return
   schedulerInitialized = true
 
-  // "0 8 * * *" with timezone Asia/Kolkata = exactly 08:00 IST every day
-  cron.schedule(
-    "0 8 * * *",
-    async () => {
-      try {
-        await runDailySummary()
-      } catch (err) {
-        console.error("[SCHEDULER] Daily summary cron failed:", err)
-      }
-    },
-    { timezone: "Asia/Kolkata" },
-  )
+  cron.schedule('0 8 * * *', async () => {
+    try {
+      await runDailySummary()
+      console.log('[CRON] Daily digest sent.')
+    } catch (err) {
+      console.error('[CRON] Daily digest failed:', err)
+    }
+  }, { timezone: 'Asia/Kolkata' })
 
-  console.log(
-    "[SCHEDULER] Daily digest cron registered — fires at 08:00 IST daily.",
-  )
+  console.log('[SCHEDULER] Daily digest cron registered — 08:00 AM IST.')
 }

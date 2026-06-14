@@ -4,20 +4,9 @@
 // Nodes with no unresolved dependencies execute simultaneously via Promise.allSettled(),
 // reducing multi-intent command latency by running independent operations in parallel.
 
-export interface DAGNode {
-  id: string;
-  type: 'validation' | 'database' | 'audit' | 'event' | 'ui';
-  // Results map is passed in so downstream nodes can read upstream outputs
-  execute: (results: Map<string, any>) => Promise<any>;
-  dependencies: string[];
-  retry?: number;
-}
+import { DAGNode, DAGResult } from './types';
+export type { DAGNode, DAGResult };
 
-export interface DAGResult {
-  completed: Set<string>;
-  failed: Map<string, Error>;
-  results: Map<string, any>;
-}
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -26,11 +15,12 @@ async function executeWithRetry(
   results: Map<string, any>,
   maxAttempts: number,
 ): Promise<any> {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  const attempts = Math.max(1, maxAttempts);
+  for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await node.execute(results);
     } catch (error) {
-      if (attempt === maxAttempts) throw error;
+      if (attempt === attempts) throw error;
       // Exponential backoff: 2s, 4s, 8s between retries
       await sleep(Math.pow(2, attempt) * 1000);
     }
@@ -106,7 +96,7 @@ export async function executeDag(nodes: DAGNode[]): Promise<DAGResult> {
 
     // CRITICAL PERFORMANCE POINT: fire all ready nodes simultaneously
     const settled = await Promise.allSettled(
-      ready.map(node => executeWithRetry(node, results, node.retry ?? 3)),
+      ready.map(node => executeWithRetry(node, results, node.retry ?? 0)),
     );
 
     // Merge results back into the shared map for downstream nodes to read

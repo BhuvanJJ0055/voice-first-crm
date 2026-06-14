@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
   
   // REMOVE the turbopack root override entirely. 
   // Let Next.js handle its own compilation locally inside the project.
+  experimental: {
+    instrumentationHook: true,
+  },
 };
 
 export default nextConfig;

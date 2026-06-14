@@ -1,6 +1,5 @@
 generator client {
-  provider = "prisma-client"
-  output   = "./client"
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -8,17 +7,19 @@ datasource db {
 }
 
 model User {
-  id           String        @id @default(uuid())
-  email        String        @unique
-  name         String
-  password     String
-  role         Role          @default(EMPLOYEE)
-  leaveBalance Int           @default(20)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  leaves       Leave[]       @relation("UserLeaves")
-  activityLogs ActivityLog[]
-  tasks        Task[]        @relation("UserTasks")
+  id              String        @id @default(uuid())
+  email           String        @unique
+  name            String
+  password        String
+  role            Role          @default(EMPLOYEE)
+  leaveBalance    Int           @default(20)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  leaves          Leave[]       @relation("UserLeaves")
+  activityLogs    ActivityLog[]
+  tasks           Task[]        @relation("UserTasks")
+  createdMeetings Meeting[]     @relation("CreatedMeetings")
+  meetings        Meeting[]     @relation("MeetingParticipants")
 
   @@index([email])
 }
@@ -85,4 +86,19 @@ model Task {
 enum TaskStatus {
   OPEN
   COMPLETED
+}
+
+model Meeting {
+  id           String   @id @default(uuid())
+  title        String
+  description  String?
+  startTime    DateTime @default(now())
+  endTime      DateTime @default(now())
+  createdById  String
+  creator      User     @relation("CreatedMeetings", fields: [createdById], references: [id])
+  participants User[]   @relation("MeetingParticipants")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([startTime])
 }
